@@ -23,12 +23,12 @@ def parse(file):
     csv_file.append("0, 0, Header, {}, {}, {}\n".format(pattern.format,
                                                         len(pattern),
                                                         pattern.resolution))
-    for index, track in enumerate(pattern):
-        csv_file.append("{}, {}, Start_track\n".format(index + 1, 0))
+    for index, track in enumerate(pattern,start=1):
+        csv_file.append("{}, {}, Start_track\n".format(index, 0))
         abstime = 0
         for event in track:
             abstime += event.tick
-            converted = midi_to_csv_map[type(event)](index + 1, abstime, event)
+            converted = midi_to_csv_map[type(event)](index, abstime, event)
             csv_file.append(converted)
     csv_file.append("0, 0, End_of_file")
     return csv_file

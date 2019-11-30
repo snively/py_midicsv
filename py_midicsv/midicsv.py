@@ -21,10 +21,14 @@ def parse(file):
     csv_file = []
     pattern = read_midifile(file)
     csv_file.append("0, 0, Header, {}, {}, {}\n".format(pattern.format,
-                                                        len(pattern),
+                                                        pattern.ntracks,
                                                         pattern.resolution))
     for index, track in enumerate(pattern,start=1):
-        csv_file.append("{}, {}, Start_track\n".format(index, 0))
+        if track.type == b"MTrk":
+            csv_file.append("{}, {}, Start_track\n".format(index, 0))
+        else:
+            tt = track.type.decode()
+            csv_file.append("{}, {}, Start_{}_track\n".format(index, 0, tt))
         abstime = 0
         for event in track:
             abstime += event.tick

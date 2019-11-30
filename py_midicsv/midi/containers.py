@@ -6,15 +6,16 @@ class Pattern(list):
 
     useRunningStatus = True
 
-    def __init__(self, tracks=[], resolution=220, format=1, tick_relative=True):
+    def __init__(self, tracks=[], format=1, ntracks=1, resolution=220, tick_relative=True):
         self.format = format
+        self.ntracks = ntracks
         self.resolution = resolution
         self.tick_relative = tick_relative
         super(Pattern, self).__init__(tracks)
 
     def __repr__(self):
-        return "midi.Pattern(format=%r, resolution=%r, tracks=\\\n%s)" % \
-            (self.format, self.resolution, pformat(list(self)))
+        return "midi.Pattern(format=%r, ntracks=%r, resolution=%r, tracks=\\\n%s)" % \
+            (self.format, self.ntracks, self.resolution, pformat(list(self)))
 
     def make_ticks_abs(self):
         self.tick_relative = False
@@ -29,7 +30,9 @@ class Pattern(list):
     def __getitem__(self, item):
         if isinstance(item, slice):
             indices = item.indices(len(self))
-            return Pattern(resolution=self.resolution, format=self.format,
+            return Pattern(format=self.format,
+                           ntracks=self.ntracks,
+                           resolution=self.resolution,
                            tracks=(super(Pattern, self).__getitem__(i) for i in range(*indices)))  # noqa: E501
         else:
             return super(Pattern, self).__getitem__(item)

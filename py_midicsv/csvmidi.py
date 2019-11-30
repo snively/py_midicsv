@@ -1,5 +1,6 @@
 ### System ###
 import csv
+import re
 
 ### Local ###
 from .midi.events import *
@@ -36,12 +37,23 @@ def parse(file):
         identifier = line[2].strip()
         if identifier == "Header":
             pattern.format = int(line[3])
+            pattern.ntracks = int(line[4])
             pattern.resolution = int(line[5])
         elif identifier == "End_of_file":
             continue
         elif identifier == "Start_track":
             track = Track(tick_relative=False)
+            track.type = "MTrk".encode()
             pattern.append(track)
+        elif identifier.startswith("Start_"):
+            p = re.compile("^Start_(\w{4})_track$")
+            m = p.match(identifier)
+            if m:
+                track = Track(tick_relative=False)
+                track.type = m.group(1).encode()
+                pattern.append(track)
+            else:
+                raise ValueError("Unexpected identifier {}".format(identifier))
         else:
             event = csv_to_midi_map[identifier](tr, time, identifier, line[3:])
             track.append(event)

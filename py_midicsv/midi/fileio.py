@@ -6,10 +6,34 @@ from .util import *
 
 
 class Trackiter:
+    """ get next track from midifile """
+    def __init__(self, reader, midifile):
+        self.reader = reader
+        self.file = midifile
 
-    def __init__(self, iterable, pos=0):
-        self._buf = iterable
-        self._it = iter(iterable)
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        magic, trksz = self.reader.parse_track_header(self.file)
+        buf = self.reader.readexactly(self.file, trksz)
+        if buf[-3:] != b"\xFF\x2F\x00":
+            raise ValueError(
+                "Track at {} does not end with End Track event".format(
+                    self.reader.basepos))
+        track = Track()
+        track.type = magic
+        trackdata = Byteiter(buf, pos=self.reader.basepos)
+        self.reader.basepos += trksz
+        return (trackdata, track)
+
+
+class Byteiter:
+    """ get next byte from track """
+
+    def __init__(self, trackbuf, pos=0):
+        self._buf = trackbuf
+        self._it = iter(trackbuf)
         self._pos = pos
 
     def __iter__(self):
@@ -37,14 +61,37 @@ class Trackiter:
         return byte
 
 
+class Eventiter:
+    """ return next MIDI event from track """
+    def __init__(self, reader, trackdata):
+        self.reader = reader
+        self.trackdata = trackdata
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return self.reader.parse_midi_event(self.trackdata)
+
+
 class FileReader(object):
 
     def read(self, midifile):
         pattern = self.parse_file_header(midifile)
         Pattern.useRunningStatus = False
-        for track in pattern:
-            self.parse_track(midifile, track)
+        for trackdata, track in Trackiter(self, midifile):
+            self.RunningStatus = None
+            for event in Eventiter(self, trackdata):
+                track.append(event)
+            pattern.append(track)
         return pattern
+
+    def readexactly(self, midifile, nbytes):
+        buf = midifile.read(nbytes)
+        if len(buf) == nbytes:
+            return buf
+        raise EOFError("Expected {} bytes after byte {}, found {}".format(
+                                           nbytes, self.basepos, len(buf)))
 
     def parse_file_header(self, midifile):
         # First four bytes are MIDI header
@@ -56,41 +103,28 @@ class FileReader(object):
         # next two bytes specify the number of tracks
         # next two bytes specify the resolution/PPQ/Parts Per Quarter
         # (in other words, how many ticks per quater note)
-        data = unpack(">LHHH", midifile.read(10))
+        self.basepos = 4
+        data = unpack(">LHHH", self.readexactly(midifile, 10))
         hdrsz = data[0] + 8
         format = data[1]
-        tracks = [Track() for x in range(data[2])]
+        ntracks = data[2]
         resolution = data[3]
-        Pattern.useRunningStatus = False
         # XXX: the assumption is that any remaining bytes
         # in the header are padding
         if hdrsz > DEFAULT_MIDI_HEADER_SIZE:
-            midifile.read(hdrsz - DEFAULT_MIDI_HEADER_SIZE)
+            self.readexactly(midifile, hdrsz - DEFAULT_MIDI_HEADER_SIZE)
         self.basepos = hdrsz
-        return Pattern(tracks=tracks, resolution=resolution, format=format)
+        return Pattern(format=format, ntracks=ntracks, resolution=resolution)
 
     def parse_track_header(self, midifile):
         # First four bytes are Track header
         magic = midifile.read(4)
-        if magic != b"MTrk":
-            raise TypeError("Bad track header in MIDI file: ", magic)
+        if magic == b'':
+            raise StopIteration
         # next four bytes are track size
-        trksz = unpack(">L", midifile.read(4))[0]
+        trksz = unpack(">L", self.readexactly(midifile, 4))[0]
         self.basepos += 8
-        return trksz
-
-    def parse_track(self, midifile, track):
-        self.RunningStatus = None
-        trksz = self.parse_track_header(midifile)
-        trackdata = Trackiter(midifile.read(trksz), pos=self.basepos)
-        while True:
-            try:
-                event = self.parse_midi_event(trackdata)
-
-                track.append(event)
-            except StopIteration:
-                break
-        self.basepos += trksz
+        return (magic, trksz)
 
     def parse_midi_event(self, trackdata):
         # first datum is varlen representing delta-time
@@ -143,17 +177,15 @@ class FileWriter(object):
         self.file = file
 
     def write(self, pattern):
-        self.write_file_header(pattern, len(pattern))
+        self.write_file_header(pattern)
         for track in pattern:
             self.write_track(track)
 
-    def write_file_header(self, pattern, length=None):
-        if length is None:
-            length = len(pattern)
+    def write_file_header(self, pattern):
         # First four bytes are MIDI header
         packdata = pack(">LHHH", 6,
                         pattern.format,
-                        length,
+                        pattern.ntracks,
                         pattern.resolution)
         self.file.write(b"MThd" + packdata)
 
@@ -162,7 +194,7 @@ class FileWriter(object):
         buf = bytearray(b"0" * hlen)
         for event in track:
             buf.extend(self.encode_midi_event(event))
-        buf[:hlen] = self.encode_track_header(len(buf) - hlen)
+        buf[:hlen] = self.encode_track_header(len(buf) - hlen, track.type)
         self.file.write(buf)
 
     def write_track_header(self, track=None):
@@ -172,10 +204,10 @@ class FileWriter(object):
             trklen = track
         else:
             trklen = len(track)
-        self.file.write(self.encode_track_header(trklen))
+        self.file.write(self.encode_track_header(trklen, track.type))
 
-    def encode_track_header(self, trklen):
-        return b"MTrk" + pack(">L", trklen)
+    def encode_track_header(self, trklen, ttype=b"MTrk"):
+        return ttype + pack(">L", trklen)
 
     def write_midi_event(self, event):
         # be sure to write the track and pattern headers first
